@@ -502,7 +502,8 @@ func (r *RuntimeProxy) containerStats(ctx context.Context, method string, req, r
 // We don't want to force the user to prefix image names so instead, prefer
 // to say the image is not present if it's not available to all CRIs
 func (r *RuntimeProxy) handleImageStatus(ctx context.Context, method string, req, resp CRIObject) (interface{}, error) {
-	for _, client := range r.clients {
+	glog.Infoln("Handling ImageStatus")
+	for i, client := range r.clients {
 		id := client.getID()
 		client, _, err := r.clientForId(id)
 		if err != nil {
@@ -510,13 +511,16 @@ func (r *RuntimeProxy) handleImageStatus(ctx context.Context, method string, req
 		}
 		_, err = client.invokeWithErrorHandling(ctx, method, req, resp)
 		if err != nil {
+			glog.Errorln("Error in ImageStatus for client %s: %v", id, err)
 			return nil, err
 		}
 		if out, ok := resp.(ImageStatusResponse); ok && out.Image() != nil {
 			out.SetImage(out.Image())
+			glog.Infoln("ImageStatus: %d client %s, image id %s", i, id, out.Image().Id())
 			// If our Id is nil, we don't have the image so just return
 			// immediately
 			if out.Image().Id() == "" {
+				glog.Infoln("ImageStatus: empty image id in client %s", id)
 				return resp, nil
 			}
 		}
@@ -525,6 +529,7 @@ func (r *RuntimeProxy) handleImageStatus(ctx context.Context, method string, req
 }
 
 func (r *RuntimeProxy) handleImageAllCRIs(ctx context.Context, method string, req, resp CRIObject) (interface{}, error) {
+	glog.Infof("Handling image %s", method)
 	errs := []error{}
 	for _, client := range r.clients {
 		id := client.getID()
@@ -534,6 +539,7 @@ func (r *RuntimeProxy) handleImageAllCRIs(ctx context.Context, method string, re
 		}
 		_, err = client.invokeWithErrorHandling(ctx, method, req, resp)
 		if err != nil {
+			glog.Errorln("Image error in %s for client %s: %v", method, id, err)
 			errs = append(errs, err)
 		}
 	}
