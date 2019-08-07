@@ -24,9 +24,6 @@ import (
 	"strings"
 	"time"
 
-	// We only use v1_12 in our software so we'll break down (through?) some
-	// walls here
-
 	"github.com/ghodss/yaml"
 	"github.com/golang/glog"
 	digest "github.com/opencontainers/go-digest"
@@ -48,6 +45,7 @@ type RuntimeProxy struct {
 	conn         *grpc.ClientConn
 	clients      []client
 	methodPrefix string
+	images       map[string]string
 }
 
 var _ Interceptor = &RuntimeProxy{}
@@ -69,6 +67,7 @@ func NewRuntimeProxy(criVersion CRIVersion, addrs []string, connectionTimout tim
 		criVersion:   criVersion,
 		streamUrl:    *streamUrl,
 		methodPrefix: fmt.Sprintf("/%s.", criVersion.ProtoPackage()),
+		images:       make(map[string]string),
 	}
 	for _, addr := range addrs {
 		r.clients = append(r.clients, newAutoClient(criVersion, addr, connectionTimout))
@@ -143,6 +142,20 @@ func (r *RuntimeProxy) Intercept(ctx context.Context, req interface{}, info *grp
 		glog.Infof("LEAVE: %s():\n%s", info.FullMethod, dump(resp))
 	}
 	return resp, nil
+}
+
+func (r *RuntimeProxy) getImageNameById(imageId string) string {
+	return r.images[imageId]
+}
+
+func (r *RuntimeProxy) setImageNameById(imageId, imageName string, overwrite bool) {
+	if _, ok := r.images[imageId]; !ok || overwrite {
+		r.images[imageId] = imageName
+	}
+}
+
+func (r *RuntimeProxy) deleteImageNameById(imageId string) {
+	delete(r.images, imageId)
 }
 
 func (r *RuntimeProxy) primaryClient() (client, error) {
@@ -429,6 +442,15 @@ func (r *RuntimeProxy) createContainer(ctx context.Context, method string, req, 
 			return nil, fmt.Errorf("criproxy: image %q is for a wrong runtime", in.Image())
 		}
 		in.SetImage(unprefixedImage)
+	} else {
+		// Image is a digest like
+		// sha256:6a92cd1fcdc8d8cdec60f33dda4db2cb1fcdcacf3410a8e05b3741f44a9b5998.
+		// Look up and set the name of the image instead, so the secondary runtime
+		// can also use it.
+		imageName := r.getImageNameById(in.Image())
+		if imageName != "" {
+			in.SetImage(imageName)
+		}
 	}
 
 	_, err = client.invokeWithErrorHandling(ctx, method, req, resp)
@@ -474,30 +496,44 @@ func (r *RuntimeProxy) containerStats(ctx context.Context, method string, req, r
 	return resp, nil
 }
 
-// func (r *RuntimeProxy) handleImage(ctx context.Context, method string, req, resp CRIObject) (interface{}, error) {
-// 	in := req.(ImageObject)
-// 	client, unprefixed, err := r.clientForImage(in.Image(), true)
-// 	if client == nil {
-// 		// the client is offline
-// 		return resp, nil
-// 	}
-// 	in.SetImage(unprefixed)
+func (r *RuntimeProxy) handleImage(ctx context.Context, method string, req, resp CRIObject) (interface{}, error) {
+	in := req.(ImageObject)
+	client, unprefixed, err := r.clientForImage(in.Image(), true)
+	if client == nil {
+		// the client is offline
+		return resp, nil
+	}
+	in.SetImage(unprefixed)
 
-// 	_, err = client.invokeWithErrorHandling(ctx, method, req, resp)
-// 	if err != nil {
-// 		return nil, err
-// 	}
+	imageName := in.Image()
 
-// 	if out, ok := resp.(ImageStatusResponse); ok && out.Image() != nil {
-// 		out.SetImage(client.addPrefix(out.Image()).(Image))
-// 	}
+	_, err = client.invokeWithErrorHandling(ctx, method, req, resp)
+	if err != nil {
+		return nil, err
+	}
 
-// 	if out, ok := resp.(ImageObject); ok {
-// 		out.SetImage(client.imageName(out.Image()))
-// 	}
+	if out, ok := resp.(ImageStatusResponse); ok && out.Image() != nil {
+		// ImageStatus
+		img := out.Image().(Image)
+		if len(img.RepoDigests()) > 0 {
+			imageName = img.RepoDigests()[0]
+		}
+		r.setImageNameById(img.Id(), imageName, true)
+		out.SetImage(client.addPrefix(out.Image()).(Image))
+		return resp, err
+	}
 
-// 	return resp, err
-// }
+	if out, ok := resp.(ImageObject); ok {
+		// PullImage
+		r.setImageNameById(out.Image(), imageName, false)
+		out.SetImage(client.imageName(out.Image()))
+		return resp, err
+	}
+
+	// RemoveImage
+	r.deleteImageNameById(in.Image())
+	return resp, err
+}
 
 // We don't want to force the user to prefix image names so instead, prefer
 // to say the image is not present if it's not available to all CRIs
@@ -567,13 +603,20 @@ var dispatchTable = map[string]dispatchItem{
 	"RuntimeService/ReopenContainerLog":       {(*RuntimeProxy).handleContainer, criRequestLogLevel},
 	"RuntimeService/PortForward":              {(*RuntimeProxy).handlePodSandbox, criRequestLogLevel},
 	"ImageService/ListImages":                 {(*RuntimeProxy).listObjects, criListLogLevel},
+	// // for this one, return that the image doesn't exist unless it
+	// // exists in all backend CRIs
+	// "ImageService/ImageStatus": {(*RuntimeProxy).handleImageStatus, criNoisyLogLevel},
+	// // proxy the pull image request to all CRIs
+	// "ImageService/PullImage": {(*RuntimeProxy).handleImageAllCRIs, criRequestLogLevel},
+	// // Send this to all CRIs
+	// "ImageService/RemoveImage": {(*RuntimeProxy).handleImageAllCRIs, criRequestLogLevel},
 	// for this one, return that the image doesn't exist unless it
 	// exists in all backend CRIs
-	"ImageService/ImageStatus": {(*RuntimeProxy).handleImageStatus, criNoisyLogLevel},
+	"ImageService/ImageStatus": {(*RuntimeProxy).handleImage, criNoisyLogLevel},
 	// proxy the pull image request to all CRIs
-	"ImageService/PullImage": {(*RuntimeProxy).handleImageAllCRIs, criRequestLogLevel},
+	"ImageService/PullImage": {(*RuntimeProxy).handleImage, criRequestLogLevel},
 	// Send this to all CRIs
-	"ImageService/RemoveImage": {(*RuntimeProxy).handleImageAllCRIs, criRequestLogLevel},
+	"ImageService/RemoveImage": {(*RuntimeProxy).handleImage, criRequestLogLevel},
 	// We'll just return the primary's info
 	"ImageService/ImageFsInfo": {(*RuntimeProxy).listObjects, criRequestLogLevel},
 }
