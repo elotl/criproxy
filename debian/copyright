@@ -1,6 +1,6 @@
 Format: http://www.debian.org/doc/packaging-manuals/copyright-format/1.0/
 Upstream-Name: criproxy
-Source: https://github.com/Mirantis/criproxy
+Source: https://github.com/elotl/criproxy
 
 Files: *
 Copyright: 2017 Mirantis

@@ -21,7 +21,7 @@ limitations under the License.
 package runtime
 
 import (
-	v1_12 "github.com/Mirantis/criproxy/pkg/runtimeapis/v1_12"
+	v1_12 "github.com/elotl/criproxy/pkg/runtimeapis/v1_12"
 	conversion "k8s.io/apimachinery/pkg/conversion"
 	runtime "k8s.io/apimachinery/pkg/runtime"
 )

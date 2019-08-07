@@ -19,7 +19,7 @@ author="Ivan Shvedunov <ishvedunov@mirantis.com>"
 cat >debian/changelog <<EOF
 criproxy (${version}) stable; urgency=optional
 
-  * https://github.com/Mirantis/criproxy
+  * https://github.com/elotl/criproxy
 
  -- ${author}  ${date}
 

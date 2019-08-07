@@ -23,8 +23,8 @@ import (
 
 	"github.com/ghodss/yaml"
 
-	v1_12 "github.com/Mirantis/criproxy/pkg/runtimeapis/v1_12"
-	v1_9 "github.com/Mirantis/criproxy/pkg/runtimeapis/v1_9"
+	v1_12 "github.com/elotl/criproxy/pkg/runtimeapis/v1_12"
+	v1_9 "github.com/elotl/criproxy/pkg/runtimeapis/v1_9"
 )
 
 const (

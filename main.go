@@ -26,8 +26,8 @@ import (
 
 	"github.com/golang/glog"
 
-	"github.com/Mirantis/criproxy/pkg/proxy"
-	"github.com/Mirantis/criproxy/pkg/utils"
+	"github.com/elotl/criproxy/pkg/proxy"
+	"github.com/elotl/criproxy/pkg/utils"
 )
 
 const (

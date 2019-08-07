@@ -31,11 +31,11 @@ import (
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 
-	proxytest "github.com/Mirantis/criproxy/pkg/proxy/testing"
-	"github.com/Mirantis/criproxy/pkg/runtimeapis"
-	v1_12 "github.com/Mirantis/criproxy/pkg/runtimeapis/v1_12"
-	runtimeapi "github.com/Mirantis/criproxy/pkg/runtimeapis/v1_9"
-	"github.com/Mirantis/criproxy/pkg/utils"
+	proxytest "github.com/elotl/criproxy/pkg/proxy/testing"
+	"github.com/elotl/criproxy/pkg/runtimeapis"
+	v1_12 "github.com/elotl/criproxy/pkg/runtimeapis/v1_12"
+	runtimeapi "github.com/elotl/criproxy/pkg/runtimeapis/v1_9"
+	"github.com/elotl/criproxy/pkg/utils"
 )
 
 const (

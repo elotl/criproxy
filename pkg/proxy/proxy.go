@@ -23,9 +23,13 @@ import (
 	"regexp"
 	"strings"
 	"time"
-	digest "github.com/opencontainers/go-digest"
+
+	// We only use v1_12 in our software so we'll break down (through?) some
+	// walls here
+
 	"github.com/ghodss/yaml"
 	"github.com/golang/glog"
+	digest "github.com/opencontainers/go-digest"
 	"golang.org/x/net/context"
 	"google.golang.org/grpc"
 )
@@ -470,29 +474,73 @@ func (r *RuntimeProxy) containerStats(ctx context.Context, method string, req, r
 	return resp, nil
 }
 
-func (r *RuntimeProxy) handleImage(ctx context.Context, method string, req, resp CRIObject) (interface{}, error) {
-	in := req.(ImageObject)
-	client, unprefixed, err := r.clientForImage(in.Image(), true)
-	if client == nil {
-		// the client is offline
-		return resp, nil
-	}
-	in.SetImage(unprefixed)
+// func (r *RuntimeProxy) handleImage(ctx context.Context, method string, req, resp CRIObject) (interface{}, error) {
+// 	in := req.(ImageObject)
+// 	client, unprefixed, err := r.clientForImage(in.Image(), true)
+// 	if client == nil {
+// 		// the client is offline
+// 		return resp, nil
+// 	}
+// 	in.SetImage(unprefixed)
 
-	_, err = client.invokeWithErrorHandling(ctx, method, req, resp)
-	if err != nil {
-		return nil, err
-	}
+// 	_, err = client.invokeWithErrorHandling(ctx, method, req, resp)
+// 	if err != nil {
+// 		return nil, err
+// 	}
 
-	if out, ok := resp.(ImageStatusResponse); ok && out.Image() != nil {
-		out.SetImage(client.addPrefix(out.Image()).(Image))
-	}
+// 	if out, ok := resp.(ImageStatusResponse); ok && out.Image() != nil {
+// 		out.SetImage(client.addPrefix(out.Image()).(Image))
+// 	}
 
-	if out, ok := resp.(ImageObject); ok {
-		out.SetImage(client.imageName(out.Image()))
-	}
+// 	if out, ok := resp.(ImageObject); ok {
+// 		out.SetImage(client.imageName(out.Image()))
+// 	}
 
-	return resp, err
+// 	return resp, err
+// }
+
+// We don't want to force the user to prefix image names so instead, prefer
+// to say the image is not present if it's not available to all CRIs
+func (r *RuntimeProxy) handleImageStatus(ctx context.Context, method string, req, resp CRIObject) (interface{}, error) {
+	for _, client := range r.clients {
+		id := client.getID()
+		client, _, err := r.clientForId(id)
+		if err != nil {
+			continue
+		}
+		_, err = client.invokeWithErrorHandling(ctx, method, req, resp)
+		if err != nil {
+			return nil, err
+		}
+		if out, ok := resp.(ImageStatusResponse); ok && out.Image() != nil {
+			out.SetImage(out.Image())
+			// If our Id is nil, we don't have the image so just return
+			// immediately
+			if out.Image().Id() == "" {
+				return resp, nil
+			}
+		}
+	}
+	return resp, nil
+}
+
+func (r *RuntimeProxy) handleImageAllCRIs(ctx context.Context, method string, req, resp CRIObject) (interface{}, error) {
+	errs := []error{}
+	for _, client := range r.clients {
+		id := client.getID()
+		client, _, err := r.clientForId(id)
+		if err != nil {
+			continue
+		}
+		_, err = client.invokeWithErrorHandling(ctx, method, req, resp)
+		if err != nil {
+			errs = append(errs, err)
+		}
+	}
+	if len(errs) > 0 {
+		return resp, errs[0]
+	}
+	return resp, nil
 }
 
 var dispatchTable = map[string]dispatchItem{
@@ -519,10 +567,15 @@ var dispatchTable = map[string]dispatchItem{
 	"RuntimeService/ReopenContainerLog":       {(*RuntimeProxy).handleContainer, criRequestLogLevel},
 	"RuntimeService/PortForward":              {(*RuntimeProxy).handlePodSandbox, criRequestLogLevel},
 	"ImageService/ListImages":                 {(*RuntimeProxy).listObjects, criListLogLevel},
-	"ImageService/ImageStatus":                {(*RuntimeProxy).handleImage, criNoisyLogLevel},
-	"ImageService/PullImage":                  {(*RuntimeProxy).handleImage, criRequestLogLevel},
-	"ImageService/RemoveImage":                {(*RuntimeProxy).handleImage, criRequestLogLevel},
-	"ImageService/ImageFsInfo":                {(*RuntimeProxy).listObjects, criRequestLogLevel},
+	// for this one, return that the image doesn't exist unless it
+	// exists in all backend CRIs
+	"ImageService/ImageStatus": {(*RuntimeProxy).handleImageStatus, criNoisyLogLevel},
+	// proxy the pull image request to all CRIs
+	"ImageService/PullImage": {(*RuntimeProxy).handleImageAllCRIs, criRequestLogLevel},
+	// Send this to all CRIs
+	"ImageService/RemoveImage": {(*RuntimeProxy).handleImageAllCRIs, criRequestLogLevel},
+	// We'll just return the primary's info
+	"ImageService/ImageFsInfo": {(*RuntimeProxy).listObjects, criRequestLogLevel},
 }
 
 var replaceRx = regexp.MustCompile(`\(\*(v1alpha2.\w+)\)\(0x[0-9a-f]+\)`)
