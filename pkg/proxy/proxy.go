@@ -512,45 +512,6 @@ func (r *RuntimeProxy) containerStats(ctx context.Context, method string, req, r
 	return resp, nil
 }
 
-func (r *RuntimeProxy) handleImage(ctx context.Context, method string, req, resp CRIObject) (interface{}, error) {
-	in := req.(ImageObject)
-	client, unprefixed, err := r.clientForImage(in.Image(), true)
-	if client == nil {
-		// the client is offline
-		return resp, nil
-	}
-	in.SetImage(unprefixed)
-
-	imageName := in.Image()
-
-	_, err = client.invokeWithErrorHandling(ctx, method, req, resp)
-	if err != nil {
-		return nil, err
-	}
-
-	if out, ok := resp.(ImageStatusResponse); ok && out.Image() != nil {
-		// ImageStatus
-		img := out.Image().(Image)
-		if len(img.RepoDigests()) > 0 {
-			imageName = img.RepoDigests()[0]
-		}
-		r.setImageNameById(img.Id(), imageName, true)
-		out.SetImage(client.addPrefix(out.Image()).(Image))
-		return resp, err
-	}
-
-	if out, ok := resp.(ImageObject); ok {
-		// PullImage
-		r.setImageNameById(out.Image(), imageName, false)
-		out.SetImage(client.imageName(out.Image()))
-		return resp, err
-	}
-
-	// RemoveImage
-	r.deleteImageNameById(in.Image())
-	return resp, err
-}
-
 // We don't want to force the user to prefix image names so instead, prefer
 // to say the image is not present if it's not available to all CRIs
 func (r *RuntimeProxy) handleImageStatus(ctx context.Context, method string, req, resp CRIObject) (interface{}, error) {
