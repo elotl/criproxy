@@ -450,14 +450,7 @@ func (r *RuntimeProxy) createContainer(ctx context.Context, method string, req, 
 
 	// don't prefix image digests
 	if _, err := digest.Parse(in.Image()); err != nil {
-		imageClient, unprefixedImage, err := r.clientForImage(in.Image(), false)
-		if err != nil {
-			return nil, err
-		}
-		if imageClient != client {
-			return nil, fmt.Errorf("criproxy: image %q is for a wrong runtime", in.Image())
-		}
-		in.SetImage(unprefixedImage)
+		in.SetImage(in.Image())
 	} else {
 		// Image is a digest like
 		// sha256:6a92cd1fcdc8d8cdec60f33dda4db2cb1fcdcacf3410a8e05b3741f44a9b5998.
@@ -563,7 +556,7 @@ func (r *RuntimeProxy) handleImageAllCRIs(ctx context.Context, method string, re
 		if out, ok := resp.(ImageObject); ok {
 			// PullImage
 			r.setImageNameById(out.Image(), imageName, false)
-			out.SetImage(client.imageName(out.Image()))
+			out.SetImage(out.Image())
 		} else {
 			// RemoveImage
 			r.deleteImageNameById(in.Image())
