@@ -509,6 +509,7 @@ func (r *RuntimeProxy) containerStats(ctx context.Context, method string, req, r
 // to say the image is not present if it's not available to all CRIs
 func (r *RuntimeProxy) handleImageStatus(ctx context.Context, method string, req, resp CRIObject) (interface{}, error) {
 	in := req.(ImageObject)
+	var imageWithDigest Image
 	for i := range r.clients {
 		client, err := r.clientAtIndex(i)
 		if err != nil {
@@ -524,15 +525,23 @@ func (r *RuntimeProxy) handleImageStatus(ctx context.Context, method string, req
 			img := out.Image().(Image)
 			if len(img.RepoDigests()) > 0 {
 				imageName = img.RepoDigests()[0]
+				imageWithDigest = img.Copy()
 			}
-			r.setImageNameById(img.Id(), imageName, true)
-			out.SetImage(out.Image())
-			// If our Id is nil, we don't have the image so just return
-			// immediately so we tell k8s we need to pull the image
-			if out.Image().Id() == "" {
-				glog.Infof("ImageStatus: empty image id in client %s", client.getID())
+			if out.Image().Id() != "" {
+				r.setImageNameById(img.Id(), imageName, true)
+			} else {
+				// If our Id is empty, we don't have the image in one
+				// of our CRIs so just return immediately so we tell
+				// k8s we need to pull the image
+				glog.Infof("ImageStatus: empty image id in client %s",
+					client.getID())
 				return resp, nil
 			}
+		}
+	}
+	if imageWithDigest != nil {
+		if out, ok := resp.(ImageStatusResponse); ok && out.Image() != nil {
+			out.SetImage(imageWithDigest)
 		}
 	}
 	return resp, nil
@@ -542,6 +551,7 @@ func (r *RuntimeProxy) handleImageAllCRIs(ctx context.Context, method string, re
 	errs := []error{}
 	in := req.(ImageObject)
 	imageName := in.Image()
+	var primaryImage string
 	for i := range r.clients {
 		client, err := r.clientAtIndex(i)
 		if err != nil {
@@ -556,7 +566,9 @@ func (r *RuntimeProxy) handleImageAllCRIs(ctx context.Context, method string, re
 		if out, ok := resp.(ImageObject); ok {
 			// PullImage
 			r.setImageNameById(out.Image(), imageName, false)
-			out.SetImage(out.Image())
+			if client.isPrimary() {
+				primaryImage = out.Image()
+			}
 		} else {
 			// RemoveImage
 			r.deleteImageNameById(in.Image())
@@ -564,6 +576,10 @@ func (r *RuntimeProxy) handleImageAllCRIs(ctx context.Context, method string, re
 	}
 	if len(errs) > 0 {
 		return resp, errs[0]
+	}
+	// Set the response to the response from the primary CRI
+	if out, ok := resp.(ImageObject); ok && primaryImage != "" {
+		out.SetImage(primaryImage)
 	}
 	return resp, nil
 }
