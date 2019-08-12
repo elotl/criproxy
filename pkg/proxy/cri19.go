@@ -19,7 +19,7 @@ package proxy
 import (
 	"google.golang.org/grpc"
 
-	runtimeapi "github.com/Mirantis/criproxy/pkg/runtimeapis/v1_9"
+	runtimeapi "github.com/elotl/criproxy/pkg/runtimeapis/v1_9"
 )
 
 // ---

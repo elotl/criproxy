@@ -24,9 +24,9 @@ import (
 
 	"google.golang.org/grpc"
 
-	"github.com/Mirantis/criproxy/pkg/runtimeapis"
-	v1_12 "github.com/Mirantis/criproxy/pkg/runtimeapis/v1_12"
-	v1_9 "github.com/Mirantis/criproxy/pkg/runtimeapis/v1_9"
+	"github.com/elotl/criproxy/pkg/runtimeapis"
+	v1_12 "github.com/elotl/criproxy/pkg/runtimeapis/v1_12"
+	v1_9 "github.com/elotl/criproxy/pkg/runtimeapis/v1_9"
 )
 
 type FakeCriServer interface {

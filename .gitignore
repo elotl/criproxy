@@ -55,9 +55,6 @@ Makefile.in
 /missing
 /stamp-h1
 
-# glide
-vendor
-
 # Temporary files
 *~
 *.swp

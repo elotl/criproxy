@@ -177,6 +177,22 @@ func (r *RuntimeProxy) clientForAnnotations(annotations map[string]string) (clie
 	return nil, fmt.Errorf("criproxy: unknown runtime: %q", annotations[targetRuntimeAnnotationKey])
 }
 
+func (r *RuntimeProxy) clientAtIndex(index int) (client, error) {
+	if index >= len(r.clients) {
+		return nil, fmt.Errorf("client index %d out of range", index)
+	}
+	c := r.clients[index]
+	c.connect()
+	if c.currentState() != clientStateConnected {
+		return nil, fmt.Errorf("CRI proxy: target runtime is not available")
+	}
+	client := c
+	if err := <-client.connect(); err != nil {
+		return nil, err
+	}
+	return client, nil
+}
+
 func (r *RuntimeProxy) clientForId(id string) (client, string, error) {
 	client := r.clients[0]
 	unprefixed := id
@@ -434,14 +450,7 @@ func (r *RuntimeProxy) createContainer(ctx context.Context, method string, req, 
 
 	// don't prefix image digests
 	if _, err := digest.Parse(in.Image()); err != nil {
-		imageClient, unprefixedImage, err := r.clientForImage(in.Image(), false)
-		if err != nil {
-			return nil, err
-		}
-		if imageClient != client {
-			return nil, fmt.Errorf("criproxy: image %q is for a wrong runtime", in.Image())
-		}
-		in.SetImage(unprefixedImage)
+		in.SetImage(in.Image())
 	} else {
 		// Image is a digest like
 		// sha256:6a92cd1fcdc8d8cdec60f33dda4db2cb1fcdcacf3410a8e05b3741f44a9b5998.
@@ -496,43 +505,83 @@ func (r *RuntimeProxy) containerStats(ctx context.Context, method string, req, r
 	return resp, nil
 }
 
-func (r *RuntimeProxy) handleImage(ctx context.Context, method string, req, resp CRIObject) (interface{}, error) {
+// We don't want to force the user to prefix image names so instead, prefer
+// to say the image is not present if it's not available to all CRIs
+func (r *RuntimeProxy) handleImageStatus(ctx context.Context, method string, req, resp CRIObject) (interface{}, error) {
 	in := req.(ImageObject)
-	client, unprefixed, err := r.clientForImage(in.Image(), true)
-	if client == nil {
-		// the client is offline
-		return resp, nil
-	}
-	in.SetImage(unprefixed)
-
-	imageName := in.Image()
-
-	_, err = client.invokeWithErrorHandling(ctx, method, req, resp)
-	if err != nil {
-		return nil, err
-	}
-
-	if out, ok := resp.(ImageStatusResponse); ok && out.Image() != nil {
-		// ImageStatus
-		img := out.Image().(Image)
-		if len(img.RepoDigests()) > 0 {
-			imageName = img.RepoDigests()[0]
+	var imageWithDigest Image
+	for i := range r.clients {
+		client, err := r.clientAtIndex(i)
+		if err != nil {
+			continue
 		}
-		r.setImageNameById(img.Id(), imageName, true)
-		out.SetImage(client.addPrefix(out.Image()).(Image))
-		return resp, err
+		imageName := in.Image()
+		_, err = client.invokeWithErrorHandling(ctx, method, req, resp)
+		if err != nil {
+			glog.Errorf("Error in ImageStatus for client %s: %v", client.getID(), err)
+			return nil, err
+		}
+		if out, ok := resp.(ImageStatusResponse); ok && out.Image() != nil {
+			img := out.Image().(Image)
+			if len(img.RepoDigests()) > 0 {
+				imageName = img.RepoDigests()[0]
+				imageWithDigest = img.Copy()
+			}
+			if out.Image().Id() != "" {
+				r.setImageNameById(img.Id(), imageName, true)
+			} else {
+				// If our Id is empty, we don't have the image in one
+				// of our CRIs so just return immediately so we tell
+				// k8s we need to pull the image
+				glog.Infof("ImageStatus: empty image id in client %s",
+					client.getID())
+				return resp, nil
+			}
+		}
 	}
-
-	if out, ok := resp.(ImageObject); ok {
-		// PullImage
-		r.setImageNameById(out.Image(), imageName, false)
-		out.SetImage(client.imageName(out.Image()))
-		return resp, err
+	if imageWithDigest != nil {
+		if out, ok := resp.(ImageStatusResponse); ok && out.Image() != nil {
+			out.SetImage(imageWithDigest)
+		}
 	}
+	return resp, nil
+}
 
-	// RemoveImage
-	r.deleteImageNameById(in.Image())
-	return resp, err
+func (r *RuntimeProxy) handleImageAllCRIs(ctx context.Context, method string, req, resp CRIObject) (interface{}, error) {
+	errs := []error{}
+	in := req.(ImageObject)
+	imageName := in.Image()
+	var primaryImage string
+	for i := range r.clients {
+		client, err := r.clientAtIndex(i)
+		if err != nil {
+			continue
+		}
+		_, err = client.invokeWithErrorHandling(ctx, method, req, resp)
+		if err != nil {
+			glog.Errorf("Image error in %s for client %s: %v",
+				method, client.getID(), err)
+			errs = append(errs, err)
+		}
+		if out, ok := resp.(ImageObject); ok {
+			// PullImage
+			r.setImageNameById(out.Image(), imageName, false)
+			if client.isPrimary() {
+				primaryImage = out.Image()
+			}
+		} else {
+			// RemoveImage
+			r.deleteImageNameById(in.Image())
+		}
+	}
+	if len(errs) > 0 {
+		return resp, errs[0]
+	}
+	// Set the response to the response from the primary CRI
+	if out, ok := resp.(ImageObject); ok && primaryImage != "" {
+		out.SetImage(primaryImage)
+	}
+	return resp, nil
 }
 
 var dispatchTable = map[string]dispatchItem{
@@ -559,10 +608,14 @@ var dispatchTable = map[string]dispatchItem{
 	"RuntimeService/ReopenContainerLog":       {(*RuntimeProxy).handleContainer, criRequestLogLevel},
 	"RuntimeService/PortForward":              {(*RuntimeProxy).handlePodSandbox, criRequestLogLevel},
 	"ImageService/ListImages":                 {(*RuntimeProxy).listObjects, criListLogLevel},
-	"ImageService/ImageStatus":                {(*RuntimeProxy).handleImage, criNoisyLogLevel},
-	"ImageService/PullImage":                  {(*RuntimeProxy).handleImage, criRequestLogLevel},
-	"ImageService/RemoveImage":                {(*RuntimeProxy).handleImage, criRequestLogLevel},
-	"ImageService/ImageFsInfo":                {(*RuntimeProxy).listObjects, criRequestLogLevel},
+	// for this one, return that the image doesn't exist unless it
+	// exists in all backend CRIs
+	"ImageService/ImageStatus": {(*RuntimeProxy).handleImageStatus, criNoisyLogLevel},
+	// proxy the pull image request to all CRIs
+	"ImageService/PullImage": {(*RuntimeProxy).handleImageAllCRIs, criRequestLogLevel},
+	// Send this to all CRIs
+	"ImageService/RemoveImage": {(*RuntimeProxy).handleImageAllCRIs, criRequestLogLevel},
+	"ImageService/ImageFsInfo": {(*RuntimeProxy).listObjects, criRequestLogLevel},
 }
 
 var replaceRx = regexp.MustCompile(`\(\*(v1alpha2.\w+)\)\(0x[0-9a-f]+\)`)

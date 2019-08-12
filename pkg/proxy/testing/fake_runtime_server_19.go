@@ -41,7 +41,7 @@ import (
 	"sync"
 	"time"
 
-	runtimeapi "github.com/Mirantis/criproxy/pkg/runtimeapis/v1_9"
+	runtimeapi "github.com/elotl/criproxy/pkg/runtimeapis/v1_9"
 	"golang.org/x/net/context"
 )
 

@@ -20,7 +20,7 @@ import (
 	"fmt"
 	"reflect"
 
-	v1_9 "github.com/Mirantis/criproxy/pkg/runtimeapis/v1_9"
+	v1_9 "github.com/elotl/criproxy/pkg/runtimeapis/v1_9"
 	"github.com/gogo/protobuf/proto"
 )
 
