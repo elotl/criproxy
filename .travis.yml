@@ -1,7 +1,17 @@
 language: go
 go:
-  - 1.10
+- '1.10'
 script:
-- go test -v ./...
 - CGO_ENABLED=0 go build
 - sha1sum criproxy > criproxy.sha1
+deploy:
+  provider: releases
+  api_key:
+    secure: kGRjIcbye1PR0a6hyMiAxCR5cEDl7CWVmszs3t/YDXCy7/mpjc61Wguh8NtjkLprf0SSBYIoCQX3uvK+uHXIjjNwtI+xkctHCYXXUVG7LH+nKYg1nnAdDCT7AQMMDb4OqxnycJ4dxESMhPBGWBK2YGebsosHFyi7J2OnbvatcBSzBNt5ks+N8B7gSV3OoomS2GB7NvsMI1WoRfw7YvX5/rGC0Mz+j87Vks1WI3g2bwgtgsFU0aZnGyKPCWZqlSmnO1IpQILqgXBt14wFlBX1wTBrQ19MyUbSUpgpqRJWqPitBzORBIq0pBF8cBxcI8bYlU2YKYH+VCVk6byviIi4L4DDcbSmI4oCc5EINEKTaZgIBANtIdQ6+9jcRboqp05pOCBd6lJu7FsPMIYdSd3trsVmbtbkWMapmRlAGl1Dy3gaV4Id07TQheVgvQ/9Rc2E9rT0UdVdtWIigpQGkrUxB42CDRWUIdHjglbAL9aOFRoNpmXTWXCfDk4GhkIy+bnxXfuVk2bsGFeR4dSY8cDvlARhm8f5zFfWaezvqghy/qfOboquUBVdBRVa4Yn5/ubCz5Gron+HzrX0tJliqkXZLhJAuv3YWFzCMHGJ1Kzem6JmCrUVJ0M7s4dRl9nyBaAtaX3AJt+LqpZjVWGyPXexa6WVkdvnTo4DcIH7iKO7otc=
+  file:
+    - criproxy
+    - criproxy.sha1
+  skip_cleanup: true
+  on:
+    repo: elotl/criproxy
+    tags: true
