@@ -17,6 +17,7 @@ limitations under the License.
 package proxy
 
 import (
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"net/url"
@@ -444,20 +445,29 @@ func (r *RuntimeProxy) createContainer(ctx context.Context, method string, req, 
 	}
 	in.SetPodSandboxId(unprefixed)
 
-	if in.Image() == "" {
+	imageId := in.Image()
+	if imageId == "" {
 		return nil, errors.New("criproxy: no image specified")
 	}
 
-	// don't prefix image digests
-	if _, err := digest.Parse(in.Image()); err != nil {
-		in.SetImage(in.Image())
+	_, digErr := digest.Parse(imageId)
+	hexErr := digErr
+	if len(imageId) == 64 {
+		_, hexErr = hex.DecodeString(in.Image())
+	}
+	if digErr != nil && hexErr != nil {
+		glog.Infof("CreateContainer: using image name %s", imageId)
+		in.SetImage(imageId)
 	} else {
 		// Image is a digest like
-		// sha256:6a92cd1fcdc8d8cdec60f33dda4db2cb1fcdcacf3410a8e05b3741f44a9b5998.
-		// Look up and set the name of the image instead, so the secondary runtime
-		// can also use it.
-		imageName := r.getImageNameById(in.Image())
+		// sha256:6a92cd1fcdc8d8cdec60f33dda4db2cb1fcdcacf3410a8e05b3741f44a9b5998
+		// or a hexadecimal hash from crio like
+		// 84581e99d807a703c9c03bd1a31cd9621815155ac72a7365fd02311264512656.
+		// Look up and set the name of the image instead, so the secondary
+		// runtime can also use it.
+		imageName := r.getImageNameById(imageId)
 		if imageName != "" {
+			glog.Infof("CreateContainer: using image name %s", imageName)
 			in.SetImage(imageName)
 		}
 	}
